@@ -1,34 +1,43 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { demoAnalyze, type Analysis } from "./analyze";
+import { CATEGORIES, demoFacts, validateFacts, type Fact } from "./analyze";
 
 const MODEL = "openai/gpt-6-astra";
-const KEYS = ["updates", "urgent", "deadlines", "decisions", "mentions"] as const;
 
-const itemSchema = {
-  type: "array",
-  items: {
-    type: "object",
-    properties: { text: { type: "string" }, author: { type: ["string", "null"] } },
-    required: ["text", "author"],
-    additionalProperties: false,
-  },
-};
 const schema = {
   type: "object",
-  properties: Object.fromEntries(KEYS.map((k) => [k, itemSchema])),
-  required: [...KEYS],
+  properties: {
+    facts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          quote: { type: "string" },
+          author: { type: ["string", "null"] },
+          categories: { type: "array", items: { type: "string", enum: [...CATEGORIES] } },
+        },
+        required: ["quote", "author", "categories"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["facts"],
   additionalProperties: false,
 };
 
-const INSTRUCTIONS = `You summarize a chat conversation for someone catching up.
-Return items in five categories: updates (important news), urgent (tasks needing fast action),
-deadlines (anything with a due date/time), decisions (things agreed or decided), mentions (@-mentions of people).
-STRICT RULES: Only use information explicitly present in the conversation. Never invent tasks, dates,
-decisions or people. If a category has nothing, return an empty array. Keep each item one short sentence,
-include the speaker as author when known, otherwise null. Ignore small talk.`;
+export const INSTRUCTIONS = `Extract the important facts from a chat conversation for someone catching up.
+Each fact is ONE statement copied VERBATIM from a message (the quote, without the "Name:" prefix).
+List each underlying statement only once; if it fits several categories, give all of them in "categories".
+Categories (use only when clearly true):
+- deadlines: work that must be done by a specific date/time ("by Friday", "due Monday 10 AM").
+- events: a scheduled meeting/review/call at a time, with no deliverable due.
+- decisions: ONLY explicit decisions/agreements ("decided", "agreed", "going with"). Plans, tasks and opinions are NOT decisions.
+- urgent: tasks or action items someone needs to do (including "X needs testing"), with or without a date.
+- mentions: only explicit @-mentions of a person.
+- updates: important news/status changes that are not tasks, deadlines, decisions or events.
+Rules: never invent or paraphrase; keep original names and wording; skip small talk; author = speaker name or null.`;
 
-async function aiAnalyze(body: string, apiKey: string): Promise<Analysis> {
+async function aiFacts(body: string, apiKey: string): Promise<Fact[]> {
   const res = await fetch("https://ai.gateway.lovable.dev/v1/responses", {
     method: "POST",
     headers: {
@@ -44,7 +53,7 @@ async function aiAnalyze(body: string, apiKey: string): Promise<Analysis> {
       reasoning: { effort: "low" },
       instructions: INSTRUCTIONS,
       input: [{ role: "user", content: body }],
-      text: { format: { type: "json_schema", name: "catchup", strict: true, schema } },
+      text: { format: { type: "json_schema", name: "catchup_facts", strict: true, schema } },
     }),
   });
   if (!res.ok || !res.body) {
@@ -67,22 +76,16 @@ async function aiAnalyze(body: string, apiKey: string): Promise<Analysis> {
       if (!l.startsWith("data:")) continue;
       const d = l.slice(5).trim();
       if (!d || d === "[DONE]") continue;
-      try {
-        const ev = JSON.parse(d);
-        if (ev.type === "response.output_text.delta") out += ev.delta;
-        if (ev.type === "response.failed" || ev.type === "error")
-          throw new Error(ev.error?.message ?? ev.response?.error?.message ?? "AI failed");
-      } catch (e) {
-        if (e instanceof SyntaxError) continue;
-        throw e;
-      }
+      let ev: { type?: string; delta?: string; error?: { message?: string }; response?: { error?: { message?: string } } };
+      try { ev = JSON.parse(d); } catch { continue; }
+      if (ev.type === "response.output_text.delta") out += ev.delta ?? "";
+      if (ev.type === "response.failed" || ev.type === "error")
+        throw new Error(ev.error?.message ?? ev.response?.error?.message ?? "AI failed");
     }
   }
   if (!out) throw new Error("The AI returned no result.");
-  const parsed = JSON.parse(out) as Record<string, { text: string; author: string | null }[]>;
-  return Object.fromEntries(
-    KEYS.map((k) => [k, (parsed[k] ?? []).map((i) => ({ text: i.text, author: i.author ?? undefined }))]),
-  ) as Analysis;
+  const parsed = JSON.parse(out) as { facts: { quote: string; author: string | null; categories: Fact["categories"] }[] };
+  return parsed.facts.map((f) => ({ quote: f.quote, author: f.author ?? undefined, categories: f.categories }));
 }
 
 export const analyzeConversation = createServerFn({ method: "POST" })
@@ -91,21 +94,17 @@ export const analyzeConversation = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase } = context;
     const { data: convo, error } = await supabase
-      .from("conversations")
-      .select("id, body")
-      .eq("id", data.conversationId)
-      .single();
+      .from("conversations").select("id, body").eq("id", data.conversationId).single();
     if (error || !convo) throw new Error("Conversation not found.");
 
     const apiKey = process.env["LOVABLE_API_KEY"];
-    let analysis: Analysis;
+    let facts: Fact[];
     let model = MODEL;
     try {
-      if (apiKey) analysis = await aiAnalyze(convo.body, apiKey);
-      else {
-        analysis = demoAnalyze(convo.body);
-        model = "demo-keyword";
-      }
+      if (apiKey) facts = await aiFacts(convo.body, apiKey);
+      else { facts = demoFacts(convo.body); model = "demo-keyword"; }
+      // Drop anything not literally in the source and merge duplicates.
+      facts = validateFacts(facts, convo.body);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Analysis failed.";
       await supabase.from("conversations").update({ status: "error", error: msg }).eq("id", convo.id);
@@ -114,18 +113,16 @@ export const analyzeConversation = createServerFn({ method: "POST" })
 
     await supabase.from("summaries").delete().eq("conversation_id", convo.id);
     const { data: summary, error: sErr } = await supabase
-      .from("summaries")
-      .insert({ conversation_id: convo.id, model })
-      .select("id")
-      .single();
+      .from("summaries").insert({ conversation_id: convo.id, model }).select("id").single();
     if (sErr || !summary) throw new Error("Could not save summary: " + sErr?.message);
-    const rows = KEYS.flatMap((k) =>
-      analysis[k].map((i) => ({ summary_id: summary.id, category: k, text: i.text, author: i.author ?? null })),
-    );
+    // One row per underlying fact; extra categories stored alongside.
+    const rows = facts.map((f) => ({
+      summary_id: summary.id, category: f.categories[0]!, categories: f.categories, text: f.quote, author: f.author ?? null,
+    }));
     if (rows.length) {
       const { error: iErr } = await supabase.from("action_items").insert(rows);
       if (iErr) throw new Error("Could not save items: " + iErr.message);
     }
     await supabase.from("conversations").update({ status: "done", error: null }).eq("id", convo.id);
-    return { model };
+    return { model, facts: facts.length };
   });
