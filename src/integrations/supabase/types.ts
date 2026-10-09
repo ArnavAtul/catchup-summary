@@ -14,7 +14,109 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      action_items: {
+        Row: {
+          author: string | null
+          category: string
+          created_at: string
+          id: string
+          summary_id: string
+          text: string
+          user_id: string
+        }
+        Insert: {
+          author?: string | null
+          category: string
+          created_at?: string
+          id?: string
+          summary_id: string
+          text: string
+          user_id?: string
+        }
+        Update: {
+          author?: string | null
+          category?: string
+          created_at?: string
+          id?: string
+          summary_id?: string
+          text?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "action_items_summary_id_fkey"
+            columns: ["summary_id"]
+            isOneToOne: false
+            referencedRelation: "summaries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      conversations: {
+        Row: {
+          body: string
+          created_at: string
+          error: string | null
+          id: string
+          is_sample: boolean
+          status: string
+          title: string
+          user_id: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          is_sample?: boolean
+          status?: string
+          title?: string
+          user_id?: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          is_sample?: boolean
+          status?: string
+          title?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      summaries: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          id: string
+          model: string
+          user_id: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          id?: string
+          model: string
+          user_id?: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          model?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "summaries_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
