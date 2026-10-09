@@ -1,6 +1,6 @@
 // Demo fallback analyzer: rule-based, NOT AI. Every item is a verbatim line
 // from the source conversation, so nothing is invented.
-export type Item = { text: string; author?: string };
+export type Item = { text: string; author?: string | undefined };
 export type Analysis = {
   updates: Item[];
   urgent: Item[];
