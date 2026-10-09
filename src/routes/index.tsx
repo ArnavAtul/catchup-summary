@@ -6,7 +6,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable/index";
 import { analyzeConversation } from "@/lib/catchup.functions";
-import { isEmpty, type Analysis, type Item } from "@/lib/analyze";
+import { isEmpty, groupFacts, type Analysis, type Category, type Item } from "@/lib/analyze";
 import { SAMPLES } from "@/lib/samples";
 
 export const Route = createFileRoute("/")({
@@ -25,10 +25,11 @@ export const Route = createFileRoute("/")({
 
 const SECTIONS: { key: keyof Analysis; label: string }[] = [
   { key: "updates", label: "Important Updates" },
-  { key: "urgent", label: "Urgent Tasks" },
+  { key: "urgent", label: "Tasks & Action Items" },
   { key: "deadlines", label: "Deadlines" },
   { key: "decisions", label: "Decisions" },
   { key: "mentions", label: "Mentions" },
+  { key: "events", label: "Scheduled Events" },
 ];
 
 type Convo = {
@@ -88,11 +89,13 @@ async function loadResult(conversationId: string) {
   const { data: s, error } = await supabase.from("summaries").select("id, model").eq("conversation_id", conversationId).maybeSingle();
   if (error) throw error;
   if (!s) return null;
-  const { data: items, error: e2 } = await supabase.from("action_items").select("category, text, author").eq("summary_id", s.id);
+  const { data: items, error: e2 } = await supabase.from("action_items").select("category, categories, text, author").eq("summary_id", s.id);
   if (e2) throw e2;
-  const a: Analysis = { updates: [], urgent: [], deadlines: [], decisions: [], mentions: [] };
-  for (const i of items ?? []) a[i.category as keyof Analysis].push({ text: i.text, author: i.author ?? undefined });
-  return { analysis: a, model: s.model };
+  const facts = (items ?? []).map((i) => ({
+    quote: i.text, author: i.author ?? undefined,
+    categories: (i.categories?.length ? i.categories : [i.category]) as Category[],
+  }));
+  return { analysis: groupFacts(facts), model: s.model, total: facts.length };
 }
 
 function Dashboard({ email }: { email: string }) {
@@ -180,7 +183,7 @@ function Dashboard({ email }: { email: string }) {
           <p className="text-muted-foreground mt-2">Paste a conversation and get the important bits.</p>
         </header>
 
-        <section className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {SECTIONS.map((s) => (
             <div key={s.key} className="card-surface p-4">
               <p className="text-xs text-muted-foreground">{s.label}</p>
@@ -188,6 +191,8 @@ function Dashboard({ email }: { email: string }) {
             </div>
           ))}
         </section>
+
+        {a && <p className="text-xs text-muted-foreground -mt-5">{result.data?.total} unique facts found · a statement in two sections is still one fact.</p>}
 
         <section className="card-surface p-5 space-y-4">
           <div className="flex flex-wrap gap-2 items-center">

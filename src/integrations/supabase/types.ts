@@ -17,6 +17,7 @@ export type Database = {
       action_items: {
         Row: {
           author: string | null
+          categories: string[]
           category: string
           created_at: string
           id: string
@@ -26,6 +27,7 @@ export type Database = {
         }
         Insert: {
           author?: string | null
+          categories?: string[]
           category: string
           created_at?: string
           id?: string
@@ -35,6 +37,7 @@ export type Database = {
         }
         Update: {
           author?: string | null
+          categories?: string[]
           category?: string
           created_at?: string
           id?: string
