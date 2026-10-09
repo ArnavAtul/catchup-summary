@@ -8,3 +8,7 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+## Architecture rules
+- AI analysis runs in a server function (src/lib/catchup.functions.ts) calling Lovable AI Gateway Responses with strict JSON schema; keeps the key server-side.
+- Per-user data (conversations, summaries, action_items) is protected by RLS on user_id = auth.uid(); server function uses the caller's authenticated client, never admin.
