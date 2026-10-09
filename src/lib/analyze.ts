@@ -24,7 +24,7 @@ export function demoAnalyze(conversation: string): Analysis {
     const line = raw.trim();
     if (!line) continue;
     const m = line.match(/^\[?[^\]]*\]?\s*([^:]{1,30}):\s*(.+)$/);
-    const item: Item = m ? { author: m[1].trim(), text: m[2].trim() } : { text: line };
+    const item: Item = m && m[1] && m[2] ? { author: m[1].trim(), text: m[2].trim() } : { text: line };
     (Object.keys(RULES) as (keyof Analysis)[]).forEach((k) => {
       if (RULES[k].test(item.text)) out[k].push(item);
     });
